@@ -1,0 +1,34 @@
+# General
+.DS_Store
+.env
+*.log
+
+# Node.js
+**/node_modules/
+**/dist/
+**/build/
+.npm
+.eslintcache
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+**/.venv/
+**/venv/
+**/env/
+**/ENV/
+.pytest_cache/
+
+# Docker
+.docker/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project Specific
+db/data/
+C:/Users/amana/.gemini/antigravity/brain/*

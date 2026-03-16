@@ -3,22 +3,23 @@ import { MapContainer, TileLayer, Marker, Polyline, useMapEvents } from 'react-l
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { renderToString } from 'react-dom/server';
-import { Ambulance, Flame, ShieldAlert, TrafficCone, AlertCircle, Crosshair, Navigation } from 'lucide-react';
+import { Ambulance, Flame, ShieldAlert, AlertCircle, Crosshair, Navigation, Info, X, Activity, Zap } from 'lucide-react';
 
-// --- Informative Signal Card UI ---
+// --- Signal Icon UI ---
 const createSignalIcon = (sig) => {
   const isDiverted = sig.state === 'DIVERTED';
   const htmlString = `
-    <div class="bg-white border border-gray-300 rounded shadow-lg overflow-hidden flex flex-col w-32">
-      <div class="${isDiverted ? 'bg-red-600 text-white animate-pulse' : 'bg-green-600 text-white'} px-2 py-1 text-[10px] font-bold text-center uppercase tracking-wide">
-        ${isDiverted ? 'LANE DIVERTED' : 'NORMAL TRAFFIC'}
+    <div class="glass overflow-hidden flex flex-col w-32 rounded-lg border-2 ${isDiverted ? 'border-red-500 pulse-red' : 'border-emerald-500/30'} shadow-lg">
+      <div class="${isDiverted ? 'bg-red-600 text-white' : 'bg-emerald-600 text-white'} px-2 py-1 text-[9px] font-black text-center uppercase tracking-tighter flex justify-between items-center">
+        <span>${isDiverted ? 'DIVERT' : 'OPEN'}</span>
+        ${isDiverted ? `<span class="bg-white/20 px-1 py-0.5 rounded text-[8px]">${sig.lane || 'M'}</span>` : ''}
       </div>
-      <div class="p-2 flex flex-col items-center justify-center bg-gray-50">
+      <div class="p-1.5 flex flex-col items-center justify-center bg-white/80">
         ${isDiverted
-      ? `<span class="text-xs font-bold text-gray-800">${sig.approaching}</span>
-             <span class="text-lg font-black text-red-600">ETA: ${sig.eta}</span>`
-      : `<span class="text-xs text-gray-400">Clear</span>`
-    }
+          ? `<span class="text-[9px] font-bold text-slate-700">${sig.approaching}</span>
+             <span class="text-base font-black text-red-600 tracking-tighter">${sig.eta}</span>`
+          : `<span class="text-[9px] text-slate-400 font-medium italic">Idle</span>`
+        }
       </div>
     </div>
   `;
@@ -27,36 +28,49 @@ const createSignalIcon = (sig) => {
 
 // --- Vehicle & Hazard Icons ---
 const getIconProps = (type) => {
-  if (type.includes('FIRE')) return { Icon: Flame, color: '#ea580c', bg: 'bg-orange-500' };
+  if (type.includes('FIRE')) return { Icon: Flame, color: '#f97316', bg: 'bg-orange-500' };
   if (type.includes('POLICE') || type.includes('CRIME')) return { Icon: ShieldAlert, color: '#2563eb', bg: 'bg-blue-600' };
-  return { Icon: Ambulance, color: '#dc2626', bg: 'bg-red-600' };
+  return { Icon: Ambulance, color: '#e11d48', bg: 'bg-rose-600' };
 };
 
-const getVehicleIcon = (type) => {
+const getVehicleIcon = (type, lane, eta) => {
   const { Icon, bg } = getIconProps(type);
   return L.divIcon({
-    className: '',
-    html: `<div class="${bg} p-1.5 rounded-full shadow-md border-2 border-white flex items-center justify-center text-white">${renderToString(<Icon size={18} />)}</div>`,
-    iconSize: [30, 30], iconAnchor: [15, 15]
+    className: 'float',
+    html: `
+      <div class="flex flex-col items-center">
+        <div class="glass-light px-2 py-0.5 rounded-full border border-slate-200 shadow-sm mb-1 whitespace-nowrap">
+           <span class="text-[8px] font-black text-slate-700 uppercase tracking-tighter">
+             ${lane || 'M'} | ${eta || '--'}
+           </span>
+        </div>
+        <div class="relative">
+          <div class="${bg} p-2 rounded-full shadow-[0_0_15px_rgba(0,0,0,0.3)] border-2 border-white flex items-center justify-center text-white scale-110">
+            ${renderToString(<Icon size={18} />)}
+          </div>
+        </div>
+      </div>
+    `,
+    iconSize: [40, 60], iconAnchor: [20, 50]
   });
 };
 
 const getHazardIcon = (type) => {
-  const { Icon, bg } = getIconProps(type);
+  const { bg } = getIconProps(type);
   return L.divIcon({
     className: '',
-    html: `<div class="${bg} p-1 rounded-sm shadow-xl border border-white animate-bounce text-white flex items-center justify-center">${renderToString(<AlertCircle size={24} />)}</div>`,
-    iconSize: [32, 32], iconAnchor: [16, 32]
+    html: `<div class="${bg} p-1.5 rounded-lg shadow-xl border-2 border-white animate-bounce text-white flex items-center justify-center">${renderToString(<AlertCircle size={24} />)}</div>`,
+    iconSize: [36, 36], iconAnchor: [18, 36]
   });
 };
 
 const targetIcon = L.divIcon({
   className: '',
-  html: `<div class="text-blue-600 animate-pulse drop-shadow-lg">${renderToString(<Crosshair size={36} />)}</div>`,
-  iconSize: [36, 36], iconAnchor: [18, 18]
+  html: `<div class="text-blue-500 drop-shadow-[0_0_8px_rgba(59,130,246,0.8)]">${renderToString(<Crosshair size={42} />)}</div>`,
+  iconSize: [42, 42], iconAnchor: [21, 21]
 });
 
-// --- Map Click Handler Component ---
+// --- Map Interaction ---
 function MapInteraction({ onMapClick }) {
   useMapEvents({
     click(e) {
@@ -69,6 +83,7 @@ function MapInteraction({ onMapClick }) {
 export default function App() {
   const [data, setData] = useState({ signals: {}, fleet: {}, hazards: [] });
   const [clickLocation, setClickLocation] = useState(null);
+  const [showInfo, setShowInfo] = useState(false);
 
   useEffect(() => {
     const ws = new WebSocket('ws://localhost:8000/ws/dashboard');
@@ -83,132 +98,180 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type, lat: clickLocation.lat, lng: clickLocation.lng })
     });
-    setClickLocation(null); // Clear target after dispatch
+    setClickLocation(null);
   };
 
-  return (
-    <div className="h-screen w-full flex bg-gray-100 font-sans text-gray-900 overflow-hidden">
+  const activeSignals = Object.entries(data.signals).filter(([id, sig]) => sig.active || sig.state === 'DIVERTED');
 
-      {/* LEFT SIDEBAR: Controls & Info */}
-      <div className="w-96 bg-white border-r border-gray-200 shadow-2xl z-10 flex flex-col relative">
-        <div className="p-6 bg-slate-800 text-white">
-          <h1 className="text-2xl font-bold tracking-tight">AutoClear</h1>
-          <p className="text-slate-400 text-sm mt-1">Command & Dispatch Center</p>
+  return (
+    <div className="h-screen w-full flex bg-slate-50 font-sans text-slate-900 overflow-hidden">
+      
+      {/* SIDEBAR: Normal Light Theme Style */}
+      <div className="w-96 bg-white border-r border-slate-200 shadow-2xl z-20 flex flex-col">
+        <div className="p-8 bg-slate-900 text-white border-b border-black">
+          <div className="flex items-center gap-3">
+            <div className="bg-rose-500 p-2 rounded-xl shadow-lg">
+              <Zap size={24} className="fill-white" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-black tracking-tighter">DIVERT</h1>
+              <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Traffic Intelligence System</p>
+            </div>
+          </div>
         </div>
 
-        <div className="p-6 flex-grow overflow-y-auto">
-
-          {/* DISPATCH CONTROL PANEL */}
-          <div className="bg-white border-2 border-slate-200 rounded-lg p-4 mb-8 shadow-sm">
-            <h2 className="text-sm font-black text-slate-800 uppercase tracking-wider mb-4 flex items-center gap-2">
-              <Navigation size={18} className="text-blue-600" />
-              Dispatch Operations
+        <div className="p-6 flex-grow overflow-y-auto space-y-8 scrollbar-hide bg-slate-50/50">
+          
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+            <h2 className="text-[11px] font-black text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
+              <Navigation size={14} className="text-rose-500" />
+              Dispatch Control
             </h2>
 
-            <div className="mb-4">
-              <p className="text-xs font-bold text-slate-500 mb-1">STEP 1: SET TARGET</p>
+            <div className="mb-6">
               {clickLocation ? (
-                <div className="bg-green-50 border border-green-200 text-green-700 text-xs p-2 rounded flex justify-between items-center">
-                  <span>Target Locked: {clickLocation.lat.toFixed(4)}, {clickLocation.lng.toFixed(4)}</span>
-                  <button onClick={() => setClickLocation(null)} className="text-red-500 font-bold hover:underline">Clear</button>
+                <div className="bg-blue-50 border border-blue-100 text-blue-700 text-[11px] p-3 rounded-xl flex justify-between items-center">
+                  <span className="font-mono">TARGET: {clickLocation.lat.toFixed(4)}, {clickLocation.lng.toFixed(4)}</span>
+                  <button onClick={() => setClickLocation(null)} className="text-rose-500 hover:text-rose-700"><X size={16}/></button>
                 </div>
               ) : (
-                <div className="bg-blue-50 border border-blue-200 text-blue-700 text-xs p-3 rounded">
-                  Click anywhere on the map to set an emergency location.
+                <div className="bg-slate-100 text-slate-400 text-[11px] p-4 rounded-xl leading-relaxed italic border border-dashed border-slate-300">
+                  Select coordinates on the map to begin vector preemption.
                 </div>
               )}
             </div>
 
-            <div>
-              <p className="text-xs font-bold text-slate-500 mb-2">STEP 2: DEPLOY UNIT</p>
-              <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { id: 'HEALTH', label: 'MEDICAL', icon: Ambulance, color: 'hover:bg-rose-50 border-rose-100 text-rose-600' },
+                { id: 'FIRE', label: 'FIRE', icon: Flame, color: 'hover:bg-orange-50 border-orange-100 text-orange-600' },
+                { id: 'POLICE', label: 'POLICE', icon: ShieldAlert, color: 'hover:bg-blue-50 border-blue-100 text-blue-600' }
+              ].map(unit => (
                 <button
-                  onClick={() => reportHazard('HEALTH')}
+                  key={unit.id}
+                  onClick={() => reportHazard(unit.id)}
                   disabled={!clickLocation}
-                  className="flex flex-col items-center p-2 bg-red-50 hover:bg-red-100 border border-red-200 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed group"
+                  className={`flex flex-col items-center p-3 rounded-xl border transition-all disabled:opacity-30 group ${unit.color}`}
                 >
-                  <Ambulance className="text-red-600 mb-1 group-hover:scale-110 transition-transform" size={20} />
-                  <span className="text-[10px] font-bold text-red-800">MEDICAL</span>
+                  <unit.icon className="mb-2 group-hover:scale-110 transition-transform" size={22} />
+                  <span className="text-[9px] font-black tracking-widest">{unit.label}</span>
                 </button>
-                <button
-                  onClick={() => reportHazard('FIRE')}
-                  disabled={!clickLocation}
-                  className="flex flex-col items-center p-2 bg-orange-50 hover:bg-orange-100 border border-orange-200 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed group"
-                >
-                  <Flame className="text-orange-600 mb-1 group-hover:scale-110 transition-transform" size={20} />
-                  <span className="text-[10px] font-bold text-orange-800">FIRE</span>
-                </button>
-                <button
-                  onClick={() => reportHazard('CRIME')}
-                  disabled={!clickLocation}
-                  className="flex flex-col items-center p-2 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed group"
-                >
-                  <ShieldAlert className="text-blue-600 mb-1 group-hover:scale-110 transition-transform" size={20} />
-                  <span className="text-[10px] font-bold text-blue-800">POLICE</span>
-                </button>
-              </div>
+              ))}
             </div>
           </div>
 
-          {/* ACTIVE FLEET TELEMETRY */}
-          <h2 className="text-sm font-bold text-gray-800 uppercase tracking-wider mb-3">Live Telemetry ({Object.keys(data.fleet).length})</h2>
-          <div className="space-y-3">
-            {Object.entries(data.fleet).length === 0 && (
-              <p className="text-xs text-slate-400 italic">No active units deployed.</p>
-            )}
-            {Object.entries(data.fleet).map(([id, v]) => (
-              <div key={id} className="p-3 border border-slate-200 rounded shadow-sm bg-slate-50 relative overflow-hidden">
-                <div className={`absolute left-0 top-0 bottom-0 w-1 ${v.status === 'ON_SCENE' ? 'bg-green-500' : 'bg-blue-500'}`}></div>
-                <div className="flex justify-between items-center mb-1 pl-2">
-                  <span className="font-bold text-sm text-slate-800">{id}</span>
-                  <span className={`text-[9px] font-bold px-2 py-0.5 rounded uppercase ${v.status === 'ON_SCENE' ? 'bg-green-200 text-green-800' : 'bg-blue-200 text-blue-800 animate-pulse'}`}>
-                    {v.status}
-                  </span>
+          <div>
+            <div className="flex justify-between items-end mb-4 px-1">
+              <h2 className="text-[11px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                <Activity size={14} className="text-emerald-500" />
+                Live Fleet
+              </h2>
+              <span className="text-[10px] font-bold text-slate-400">{Object.keys(data.fleet).length} UNITS</span>
+            </div>
+            
+            <div className="space-y-3">
+              {Object.entries(data.fleet).length === 0 && (
+                <p className="text-xs text-slate-400 italic text-center py-10">No units currently dispatched.</p>
+              )}
+              {Object.entries(data.fleet).map(([id, v]) => (
+                <div key={id} className="bg-white border border-slate-200 p-4 rounded-xl relative overflow-hidden group shadow-sm">
+                  <div className={`absolute left-0 top-0 bottom-0 w-1 ${v.status === 'ON_SCENE' ? 'bg-emerald-500' : 'bg-rose-600 animate-pulse'}`}></div>
+                  <div className="flex justify-between items-start mb-2">
+                    <span className="font-black text-sm uppercase text-slate-800 tracking-tight">{id}</span>
+                    <div className="flex flex-col items-end gap-1">
+                      <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded uppercase border ${v.status === 'ON_SCENE' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-rose-50 text-rose-600 border-rose-100'}`}>
+                        {v.status}
+                      </span>
+                      <span className="text-[9px] font-black text-slate-400">LANE: {v.lane || 'M'}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 text-[10px] text-slate-400 font-mono">
+                    <Navigation size={10} /> {v.lat.toFixed(4)}, {v.lng.toFixed(4)}
+                  </div>
                 </div>
-                <div className="text-[10px] text-slate-500 pl-2">
-                  COORDS: {v.lat.toFixed(4)}, {v.lng.toFixed(4)}
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
+        </div>
+
+        <div className="p-6 border-t border-slate-100 bg-white">
+          <button 
+            onClick={() => setShowInfo(true)}
+            className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center justify-center gap-2 border border-slate-200"
+          >
+            <Info size={14} /> System architecture
+          </button>
         </div>
       </div>
 
-      {/* RIGHT AREA: Map */}
       <div className="flex-grow relative z-0">
-        <MapContainer center={[22.5745, 88.3650]} zoom={15} style={{ height: '100%', width: '100%' }}>
+        <MapContainer center={[22.5745, 88.3650]} zoom={15} style={{ height: '100%', width: '100%' }} zoomControl={false}>
           <TileLayer
-            url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
-            attribution="&copy; OpenStreetMap contributors &copy; CARTO"
+            url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> contributors'
           />
           <MapInteraction onMapClick={setClickLocation} />
 
-          {/* User's click target marker */}
-          {clickLocation && (
-            <Marker position={[clickLocation.lat, clickLocation.lng]} icon={targetIcon} />
-          )}
+          {clickLocation && <Marker position={[clickLocation.lat, clickLocation.lng]} icon={targetIcon} />}
 
-          {/* Render Route Polylines */}
           {Object.values(data.fleet).map((v, idx) => (
-            v.path && <Polyline key={`path-${idx}`} positions={v.path} color={getIconProps(v.type).color} weight={5} opacity={0.8} />
+            v.path && <Polyline key={`path-${idx}`} positions={v.path} color={getIconProps(v.type).color} weight={5} opacity={0.4} dashArray="5, 8" />
           ))}
 
-          {/* Render Signals */}
-          {Object.entries(data.signals).map(([id, sig]) => (
-            <Marker key={id} position={[sig.lat, sig.lng]} icon={createSignalIcon(sig)} />
+          {activeSignals.map(([id, sig]) => (
+            <Marker key={id} position={[sig.lat, sig.lng]} icon={createSignalIcon(sig)} zIndexOffset={500} />
           ))}
 
-          {/* Render Hazards */}
           {data.hazards.map(haz => (
             <Marker key={haz.id} position={[haz.lat, haz.lng]} icon={getHazardIcon(haz.type)} />
           ))}
 
-          {/* Render Vehicles */}
           {Object.entries(data.fleet).map(([id, vehicle]) => (
-            <Marker key={id} position={[vehicle.lat, vehicle.lng]} icon={getVehicleIcon(vehicle.type)} />
+            <Marker key={id} position={[vehicle.lat, vehicle.lng]} icon={getVehicleIcon(vehicle.type, vehicle.lane, vehicle.eta)} zIndexOffset={1000} />
           ))}
         </MapContainer>
+        
+        {/* LEGEND overlay */}
+        <div className="absolute bottom-8 right-8 z-10 bg-white p-4 rounded-2xl shadow-xl border border-slate-200 flex flex-col gap-2">
+           <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-emerald-500"></div>
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Standard Flow</span>
+           </div>
+           <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-rose-500 pulse-red"></div>
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Lane Reserved</span>
+           </div>
+        </div>
       </div>
+
+      {/* INFO modal - Simple & Normal */}
+      {showInfo && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-6 transition-all">
+          <div className="bg-white w-full max-w-2xl rounded-2xl overflow-hidden shadow-2xl flex flex-col">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+              <h2 className="text-xl font-black tracking-tight text-slate-800">System architecture</h2>
+              <button onClick={() => setShowInfo(false)} className="text-slate-400 hover:text-rose-500"><X size={24} /></button>
+            </div>
+            <div className="p-8 text-sm text-slate-600 space-y-6">
+              <section>
+                <h3 className="font-black text-rose-500 uppercase tracking-widest text-[10px] mb-2">Project Vision</h3>
+                <p>DIVERT utilizes dynamic L/R/M lane preemption to clear paths for emergency vehicles minutes before arrival, reducing response times by up to 40%.</p>
+              </section>
+              <section>
+                <h3 className="font-black text-emerald-500 uppercase tracking-widest text-[10px] mb-2">Technical Flow</h3>
+                <ul className="list-disc pl-5 space-y-2">
+                   <li><strong>Pathfinding:</strong> OSRM integration for real-street routing.</li>
+                   <li><strong>Lane Preemption:</strong> Automatic reservation of Left, Right, or Middle lanes at upcoming intersections.</li>
+                   <li><strong>ETA Prediction:</strong> Real-time estimation based on street distance and congestion factors.</li>
+                </ul>
+              </section>
+            </div>
+            <div className="p-6 bg-slate-50 border-t border-slate-100 text-center">
+               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">&copy; 2026 Emergency Systems Framework</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

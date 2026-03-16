@@ -1,0 +1,51 @@
+DIVERT: PROJECT INFO & IDEATION DOC
+====================================
+
+1. PROJECT VISION
+-----------------
+Emergency vehicles face significant delays in traffic, often costing lives. DIVERT (Dynamic Intelligent Vehicle Emergency Routing & Traffic) aims to bridge the gap between emergency vehicle tracking and urban traffic infrastructure. The goal is to create a "green corridor" that moves dynamically with the vehicle.
+
+2. SYSTEM ARCHITECTURE
+----------------------
+The system is built on a distributed hub-and-spoke model:
+- VEHICLE CLIENT (Simulated): Reports GPS coordinates and emergency status.
+- DIVERT CORE SERVER: The brain of the system. It processes incoming telemetry, calculates routes, and communicates with the signal network.
+- TRAFFIC SIGNAL CONTROLLERS: Hardware-interfacing software that manages physical signal states and lane indicators.
+- DASHBOARD: A high-fidelity UI for central command.
+
+3. CORE LOGIC
+-------------
+A. Dynamic Geofencing:
+   Instead of static routes, DIVERT uses a 600m rolling "Influence Zone" around the vehicle. Any infrastructure within this zone enters "Emergency Priority Mode."
+
+B. Lane Diversion Logic:
+   The system assumes traffic signals are equipped with "Priority Lane" LED boards. When DIVERTED, the leftmost lane is reserved for the EV, and public vehicles are directed via info-boards to merge right.
+
+C. ML ETA Prediction:
+   Traditional ETAs fail in high-stress emergency scenarios. Our ML model (Random Forest) considers:
+   - Dynamic distance vs. linear distance.
+   - Congestion levels (simulated via Redis state).
+   - Vehicle acceleration profiles (Ambulance vs. Heavy Fire Truck).
+
+4. DEVELOPMENT STAGES
+---------------------
+- PHASE 1: Real-time sync between Backend (FastAPI) and Frontend (React Leaflet).
+- PHASE 2: Integration of OSRM for "real-world" street logic instead of simple straight lines.
+- PHASE 3 (Current): Branding, UI refinement, and formal ML integration.
+- PHASE 4 (Future): Scaling to handle thousands of concurrent vehicles and multi-city integration.
+
+5. FUTURE ENHANCEMENTS & SCOPE
+------------------------------
+- IoT Integration: Direct hardware control using MQTT protocol for low-latency signal switching.
+- Civilian Navigation App: An SDK for apps like Google Maps/Waze to warn drivers: "Emergency Vehicle Approaching - Merge Right."
+- Adaptive Rerouting: If a major blockage is detected mid-route, the system pushes a high-priority reroute to the EV nav system instantly.
+- Predictive Deployment: Using historical data to position emergency units in "High-Risk zones" before an emergency even happens.
+
+6. HARDWARE SPECIFICATIONS (CONCEPTUAL)
+---------------------------------------
+- Traffic Signals: Multi-segment LED displays for lane info.
+- EV Transponders: Dedicated Short Range Communications (DSRC) devices for sub-meter positioning accuracy.
+
+--------------------------------------------------------------------------------
+"DIVERT: Because every second counts."
+--------------------------------------------------------------------------------

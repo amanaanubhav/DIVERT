@@ -3,15 +3,18 @@ import json
 import math
 import httpx
 from redis.asyncio import Redis
+from ml_predictor import predictor
 
 redis_client = Redis.from_url("redis://redis:6379", decode_responses=True)
 
 # Fixed stations where vehicles spawn
 STATIONS = {
-    "HEALTH": {"lat": 22.5700, "lng": 88.3600, "type": "AMBULANCE"},
-    "FIRE": {"lat": 22.5800, "lng": 88.3700, "type": "FIRE_BRIGADE"},
-    "CRIME": {"lat": 22.5750, "lng": 88.3550, "type": "POLICE"}
+    "HEALTH": {"lat": 22.5700, "lng": 88.3600, "type": "AMBULANCE", "base_lane": "L"},
+    "FIRE": {"lat": 22.5800, "lng": 88.3700, "type": "FIRE_BRIGADE", "base_lane": "M"},
+    "CRIME": {"lat": 22.5750, "lng": 88.3550, "type": "POLICE", "base_lane": "R"}
 }
+
+# LANES: L=Left, M=Middle, R=Right
 
 # Fixed traffic signals scattered in the area
 SIGNALS = {
@@ -61,50 +64,86 @@ async def dispatch_vehicle(hazard_id: str, hazard_type: str, haz_lat: float, haz
     # 3. Initialize Vehicle
     fleet_str = await redis_client.get("ev_fleet")
     fleet = json.loads(fleet_str) if fleet_str else {}
-    fleet[v_id] = {"type": station["type"], "lat": route_coords[0][0], "lng": route_coords[0][1], "status": "DISPATCHED", "path": route_coords}
+    fleet[v_id] = {
+        "type": station["type"], 
+        "lat": route_coords[0][0], 
+        "lng": route_coords[0][1], 
+        "status": "DISPATCHED", 
+        "path": route_coords,
+        "lane": station["base_lane"],
+        "eta": "Calculating..."
+    }
     await redis_client.set("ev_fleet", json.dumps(fleet))
 
     # 4. Movement & Signal Proximity Loop
-    speed_mps = 15 # ~54 km/h
+    heartbeat = 0.3  # Update every 0.3s
+    speed_mps = 16.6 # ~60 km/h (standard urban emergency speed)
     
     for i in range(len(route_coords) - 1):
         start_pt = route_coords[i]
         end_pt = route_coords[i+1]
-        dist = haversine_distance(start_pt[0], start_pt[1], end_pt[0], end_pt[1])
-        steps = max(1, int(dist / (speed_mps * 0.5))) # 0.5s intervals
+        
+        # Calculate distance of this segment
+        segment_dist = haversine_distance(start_pt[0], start_pt[1], end_pt[0], end_pt[1])
+        
+        # Determine number of heartbeats for this segment
+        # dist = speed * time -> time = dist / speed
+        # steps = total_time / heartbeat
+        total_time = segment_dist / speed_mps
+        steps = max(1, int(total_time / heartbeat))
         
         current_lat, current_lng = start_pt[0], start_pt[1]
         
         for step in range(steps):
-            current_lat += (end_pt[0] - current_lat) / (steps - step)
-            current_lng += (end_pt[1] - current_lng) / (steps - step)
+            # Proportional interpolation
+            fraction = (step + 1) / steps
+            current_lat = start_pt[0] + (end_pt[0] - start_pt[0]) * fraction
+            current_lng = start_pt[1] + (end_pt[1] - start_pt[1]) * fraction
             
             # Update Vehicle Position
             fleet_str = await redis_client.get("ev_fleet")
             fleet = json.loads(fleet_str)
-            if v_id in fleet:
-                fleet[v_id]["lat"] = current_lat
-                fleet[v_id]["lng"] = current_lng
-                await redis_client.set("ev_fleet", json.dumps(fleet))
             
             # Check Signal Proximity (< 600 meters)
             signals_str = await redis_client.get("traffic_signals")
             signals = json.loads(signals_str)
+            
+            nearest_eta = None
+            approaching_lane = station["base_lane"]
+            
             for sig_id, sig_data in signals.items():
                 sig_dist = haversine_distance(current_lat, current_lng, sig_data["lat"], sig_data["lng"])
                 if sig_dist < 600:
-                    eta_seconds = int(sig_dist / speed_mps)
+                    preferred_lane = "L" if "0" in sig_id or "2" in sig_id else "M" if "3" in sig_id else "R"
+                    approaching_lane = preferred_lane
+                    
+                    congestion = 2.0 
+                    predicted_eta_seconds = int(predictor.predict_eta(sig_dist, congestion))
+                    sig_eta_str = f"{predicted_eta_seconds}s"
+                    
+                    # Track nearest ETA for the vehicle symbol
+                    if nearest_eta is None or predicted_eta_seconds < int(nearest_eta[:-1]):
+                        nearest_eta = sig_eta_str
+
                     signals[sig_id].update({
                         "state": "DIVERTED", 
                         "approaching": station["type"], 
-                        "eta": f"{eta_seconds}s"
+                        "eta": sig_eta_str,
+                        "lane": preferred_lane,
+                        "active": True
                     })
                 elif signals[sig_id]["approaching"] == station["type"]:
-                    # Vehicle passed or moved away
-                    signals[sig_id].update({"state": "NORMAL", "approaching": None, "eta": None})
+                    signals[sig_id].update({"state": "NORMAL", "approaching": None, "eta": None, "active": False})
+            
+            if v_id in fleet:
+                fleet[v_id]["lat"] = current_lat
+                fleet[v_id]["lng"] = current_lng
+                fleet[v_id]["lane"] = approaching_lane
+                fleet[v_id]["eta"] = nearest_eta if nearest_eta else "CLEAR"
+                await redis_client.set("ev_fleet", json.dumps(fleet))
             
             await redis_client.set("traffic_signals", json.dumps(signals))
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(heartbeat)
 
     # Arrived at destination
     fleet_str = await redis_client.get("ev_fleet")
